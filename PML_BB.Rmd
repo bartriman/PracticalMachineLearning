@@ -1,0 +1,139 @@
+---
+title: "Practical Machine Learning"
+author: "Bartlomiej Bielski"
+date: "March 2019"
+output:
+  html_document: default
+  pdf_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(caret)
+library(formatR)
+library(randomForest)
+```
+
+## 01. Executive summary
+
+Sport was always - beside military - the area that adopted the newest technologies. Few years after professional athletes, the amateurs started to use electronical devices that collect data. In most cases these are data on quantitative aspects of sports, like time, distance, heart rate, pace etc. Quite rarely it is about **quality** of movement. In this project, the data from accelerometers on the belt, forearm, arm, and dumbbell of 6 participants will be used. The athletes were asked during the experiment, to perform barbell lifts correctly and incorrectly in 5 different ways. The goal of this project is to predict the manner in which athletes did the exercise. 
+
+
+## 02. Getting data
+
+The data for this project comes from this source: http://web.archive.org/web/20161224072740/http:/groupware.les.inf.puc-rio.br/har. If you use the document you create for this class for any purpose, please cite them as they have been very generous in allowing their data to be used for this kind of assignment.
+
+The training data for this project are available here:
+https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv
+
+The test data are available here:
+https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv
+
+Loading the data into training and testing data frames:
+
+```{r, echo=TRUE, results='hide'}
+# setwd("~/PracticalMachineLearning")
+
+ifelse (
+!file.exists("pml-training.csv"), 
+download.file("https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv", 
+destfile = "pml-training.csv", mode='wb' ), '')
+pmltrain <- read.csv("pml-training.csv", header = TRUE)
+
+ifelse (
+!file.exists("pml-testing.csv"), 
+download.file("https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv", 
+destfile = "pml-testing.csv", mode='wb' ), '')
+pmltest <- read.csv("pml-testing.csv", header = TRUE)
+```
+
+## 03. Short Exploratory Data Analysis
+A brief look at the training and testing datasets reveals, that there are over 19.6k of observations of 160 variables. The `str` command shows that first few fields contain the information about name of the athlete, timestamp, if new page is needed ("new window") - most probably summary row. Rest of the fields contain different characteristics of accelerator movement (min, max, skewness, kurtosis). 
+```{r, echo=TRUE, tidy=TRUE, tidy.opts=list(width.cutoff=60)}
+str(pmltrain, list.len = 10)
+```
+What is worth noting, is that there are a lot of columns that contain "NA" values. If we take a closer look at this issue, we will see, that it makes sense to remove all fields that contain all "NA" values:
+
+```{r}
+# Number of columns with over 50% data filled:
+sum((colSums(!is.na(pmltrain[,-ncol(pmltrain)])) < 0.5*nrow(pmltrain)))
+
+# Number of columns with solely NA values:
+ncol(pmltrain) - ncol(pmltrain[,(colSums(is.na(pmltrain)) == 0)])
+
+```
+
+Finally we can check, how many of variables, are near zero covariates:
+```{r}
+ nzv_train <- nearZeroVar(pmltrain, saveMetrics=TRUE)
+ nrow(nzv_train[nzv_train$nzv == TRUE, ])
+```
+
+
+To sum up:
+
+1. there are several columns that are irrelevant to quality of movement recognition, like: "user_name", "raw_timestamp_part_1","raw_timestamp_part_2","cvtd_timestamp","num_window",
+2. a lot of columns (67) do no contain any data,
+3. rows that have "yes" value in column "new window" can be omitted,
+4. exactly 60 columns have near zero covariates.
+
+
+## 04. Preprocessing training dataset
+The conclusions from exploratory data anaylisis can be implemented with following code:
+```{r}
+#removing summary rows:
+pmltrain <- subset(pmltrain, new_window == "no")
+#column to be removed:
+ctr <- c("X", "user_name", "raw_timestamp_part_1","raw_timestamp_part_2",
+         "cvtd_timestamp","new_window","num_window")
+pmltrain <- pmltrain[, !names(pmltrain) %in% ctr]
+#removing columns with no data:
+pmltrain <- pmltrain[,(colSums(is.na(pmltrain)) == 0)]
+#removing near zero covariates:
+nzv_train <- nearZeroVar(pmltrain, saveMetrics=TRUE)
+pmltrain <- pmltrain[, !nzv_train$nzv]
+dim(pmltrain)
+```
+These steps leave us with 19.216 observations of 53 variables available for training purpose.
+
+## 05. Training and testing prediction model
+Before we build and evaluate a model, we need to subset training and validation set from training dataset. 
+```{r}
+InTrain <- createDataPartition(y=pmltrain$classe, p=0.7, list=FALSE)
+training <- pmltrain[InTrain,]
+validation <- pmltrain[-InTrain,]
+
+```
+The quality of the athletes' movement is a classification problem type. The algorithm needs to decide, if the data from sensors point to correct or incorrect technique of the exercise (barbell lift). For solving this kind of problems, the random forest (decision tree) seems to be appropriate.
+```{r}
+set.seed(9999)
+RFmodel <- randomForest(classe~., data = training)
+RFmodel
+```
+The Out-of-bag error (or In-Sample-Error) for our `RFmodel` is on level of 0.51%. That seems quite low, so the model needs to evaluated on validation dataset, to see, if it's no overfitted. We need to apply the model to validation dataset and compare the predictions with actual data. The most convienient way to do that is to call a confusion matrix function:
+```{r}
+validation_p <- predict(RFmodel, newdata=validation)
+
+confusionMatrix(validation_p, validation$classe)
+```
+Accuracy of the model is on level of 99.6% and Out of sample error is 0.33%.
+
+## 06. Prediction
+Having such good model, we can test it on data that we have kept aside till now: `pmltest`:
+```{r}
+prediction <- predict(RFmodel, newdata=pmltest)
+prediction
+```
+
+
+
+
+<!-- ## Including Plots -->
+
+<!-- You can also embed plots, for example: -->
+
+<!-- ```{r pressure, echo=FALSE} -->
+<!-- plot(pressure) -->
+<!-- ``` -->
+
+<!-- Note that the `echo = FALSE` parameter was added to the code chunk to prevent printing of the R code that generated the plot. -->
